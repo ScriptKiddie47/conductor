@@ -10,14 +10,84 @@
  *  an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  *  specific language governing permissions and limitations under the License.
  */
+ 
+// tag::configurations[]
+repositories {
+	mavenCentral()
+}
+
+
+configurations {
+	jaxb
+}
+
+task genJaxb {
+	println ("${buildDir}")
+	println ("${projectDir}")
+	ext.sourcesDir = "${buildDir}/generated-sources/jaxb"
+	ext.classesDir = "${buildDir}/classes/jaxb"
+	//ext.schema = "http://localhost:8080/ws/countries.wsdl"
+	//ext.schema = "${projectDir}/src/main/resources/tempuri.wsdl"
+	ext.schema = "https://www.dataaccess.com/webservicesserver/NumberConversion.wso?WSDL"
+
+	outputs.dir classesDir
+
+	doLast() {
+		project.ant {
+			taskdef name: "xjc", classname: "com.sun.tools.xjc.XJCTask",
+					classpath: configurations.jaxb.asPath
+			mkdir(dir: sourcesDir)
+			mkdir(dir: classesDir)
+
+				xjc(destdir: sourcesDir, schema: schema,
+						package: "com.NumberConversion.wsdl") {
+						arg(value: "-wsdl")
+					produces(dir: sourcesDir, includes: "**/*.java")
+				}
+
+				javac(destdir: classesDir, source: 1.8, target: 1.8, debug: true,
+						debugLevel: "lines,vars,source",
+						classpath: configurations.jaxb.asPath) {
+					src(path: sourcesDir)
+					include(name: "**/*.java")
+					include(name: "*.java")
+					}
+
+				copy(todir: classesDir) {
+						fileset(dir: sourcesDir, erroronmissingdir: false) {
+						exclude(name: "**/*.java")
+				}
+			}
+		}
+	}
+}
+
+test {
+    exclude '**/**Integration'
+}
 dependencies {
     implementation project(':conductor-common')
     implementation project(':conductor-core')
     compileOnly 'org.springframework.boot:spring-boot-starter'
     compileOnly 'org.springframework.boot:spring-boot-starter-web'
+    
 
     implementation "javax.ws.rs:jsr311-api:${revJsr311Api}"
-
+    
+    /*SOAP Dependencies*/
+    implementation 'org.springframework.boot:spring-boot-starter-web-services'
+    implementation 'org.springframework.ws:spring-ws-core'
+    // For Java 11:
+	implementation 'org.glassfish.jaxb:jaxb-runtime'
+	implementation(files(genJaxb.classesDir).builtBy(genJaxb))
+	implementation 'javax.xml.bind:jaxb-api:2.3.1'
+	implementation 'jakarta.xml.bind:jakarta.xml.bind-api:4.0.0'
+	jaxb "com.sun.xml.bind:jaxb-xjc:2.1.7"
+	//jaxb "com.sun.xml.bind:jaxb-xjc:4.0.1"
+    //jaxb "com.sun.xml.bind:jaxb-impl:4.0.1"
+	/*SOAP Dependencies*/
+	
+	
     testImplementation 'org.springframework.boot:spring-boot-starter-web'
     testImplementation "org.testcontainers:mockserver:${revTestContainer}"
     testImplementation "org.mock-server:mockserver-client-java:${revMockServerClient}"

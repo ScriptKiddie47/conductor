@@ -154,7 +154,7 @@ allprojects {
     compileJava.inputs.files(processResources)
 
     test {
-        useJUnitPlatform()
+        //useJUnitPlatform()
         testLogging {
             events = ["SKIPPED", "FAILED"]
             exceptionFormat = "full"

@@ -13,10 +13,12 @@
 package com.netflix.conductor.tasks.http;
 
 import java.io.IOException;
+import java.math.BigInteger;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,6 +34,7 @@ import com.netflix.conductor.core.execution.tasks.WorkflowSystemTask;
 import com.netflix.conductor.core.utils.Utils;
 import com.netflix.conductor.model.TaskModel;
 import com.netflix.conductor.model.WorkflowModel;
+import com.netflix.conductor.tasks.client.NumberConversionClient;
 import com.netflix.conductor.tasks.http.providers.RestTemplateProvider;
 
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -44,6 +47,8 @@ import static com.netflix.conductor.common.metadata.tasks.TaskType.TASK_TYPE_HTT
 @Component(TASK_TYPE_HTTP)
 public class HttpTask extends WorkflowSystemTask {
 
+	private final NumberConversionClient numberConversionClient;
+	
     private static final Logger LOGGER = LoggerFactory.getLogger(HttpTask.class);
 
     public static final String REQUEST_PARAMETER_NAME = "http_request";
@@ -61,15 +66,16 @@ public class HttpTask extends WorkflowSystemTask {
     private final String requestParameter;
 
     @Autowired
-    public HttpTask(RestTemplateProvider restTemplateProvider, ObjectMapper objectMapper) {
-        this(TASK_TYPE_HTTP, restTemplateProvider, objectMapper);
+    public HttpTask(RestTemplateProvider restTemplateProvider, ObjectMapper objectMapper,NumberConversionClient client) {
+        this(TASK_TYPE_HTTP, restTemplateProvider, objectMapper,client);
     }
 
     public HttpTask(
-            String name, RestTemplateProvider restTemplateProvider, ObjectMapper objectMapper) {
+            String name, RestTemplateProvider restTemplateProvider, ObjectMapper objectMapper,NumberConversionClient client) {
         super(name);
         this.restTemplateProvider = restTemplateProvider;
         this.objectMapper = objectMapper;
+		this.numberConversionClient = client;
         this.requestParameter = REQUEST_PARAMETER_NAME;
         LOGGER.info("{} initialized...", getTaskType());
     }
@@ -101,7 +107,14 @@ public class HttpTask extends WorkflowSystemTask {
         }
 
         try {
-            HttpResponse response = httpCall(input);
+			HttpResponse response = null;
+			if (Objects.nonNull(input.getBody()) && input.getBody().toString().contains("Envelope")) {
+				input.setAccept("*/*");
+				input.setContentType("text/xml");
+				response = httpSoapCall(input);
+			} else {
+				response = httpCall(input);
+			}
             LOGGER.debug(
                     "Response: {}, {}, task:{}",
                     response.statusCode,
@@ -149,11 +162,31 @@ public class HttpTask extends WorkflowSystemTask {
      *     tasks extended from this task can re-use this to make http calls
      */
     protected HttpResponse httpCall(Input input) throws Exception {
+        LOGGER.debug(
+                "Input Request :::: Method - {} vipaddress - {} appName - {} headers - {} uri - {} body - {} connectionTimeout - {} readTimeout - {} accept - {} contentType - {}",
+                input.getMethod(),
+                input.getVipAddress(),
+                input.getAppName(),
+                input.getHeaders(),
+                input.getUri(),
+                input.getBody(),
+                input.getConnectionTimeOut(),
+                input.getReadTimeOut(),
+                input.getAccept(),
+                input.getContentType());
+        
+        System.out.println(input.getHeaders());
         RestTemplate restTemplate = restTemplateProvider.getRestTemplate(input);
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.valueOf(input.getContentType()));
-        headers.setAccept(Collections.singletonList(MediaType.valueOf(input.getAccept())));
+		HttpHeaders headers = new HttpHeaders();
+		
+		if(input.getHeaders().containsValue("application/xml")) {
+			headers.setContentType(MediaType.valueOf("application/xml"));
+		}else {
+			headers.setContentType(MediaType.valueOf(input.getContentType()));
+		}
+
+		headers.setAccept(Collections.singletonList(MediaType.valueOf(input.getAccept())));
 
         input.headers.forEach(
                 (key, value) -> {
@@ -188,7 +221,47 @@ public class HttpTask extends WorkflowSystemTask {
         }
     }
 
+    /**
+     * @param input HTTP Request
+     * @return Response of the http soap call
+     * @throws Exception If there was an error making http call Note: protected access is so that
+     *     tasks extended from this task can re-use this to make http calls
+     */
+    protected HttpResponse httpSoapCall(Input input) throws Exception {
+        LOGGER.debug(
+                "Input Request :::: Method - {} vipaddress - {} appName - {} headers - {} uri - {} body - {} connectionTimeout - {} readTimeout - {} accept - {} contentType - {}",
+                input.getMethod(),
+                input.getVipAddress(),
+                input.getAppName(),
+                input.getHeaders(),
+                input.getUri(),
+                input.getBody(),
+                input.getConnectionTimeOut(),
+                input.getReadTimeOut(),
+                input.getAccept(),
+                input.getContentType());
+
+                HttpResponse response = new HttpResponse();
+                try {
+                        response.body = numberConversionClient.getNumberToWordsString(input.getBody());
+	                    response.statusCode = 200;
+	                    response.reasonPhrase = "200";
+	                    response.headers = null;
+                    return response;
+                } catch (Exception ex) {
+                    LOGGER.error(
+                            String.format(
+                                    "Got unexpected http response - uri: %s, vipAddress: %s",
+                                    input.getUri(), input.getVipAddress()),
+                            ex);
+                    String reason = ex.getLocalizedMessage();
+                    LOGGER.error(reason, ex);
+                    throw new Exception(reason);
+                }
+    }
+
     private Object extractBody(String responseBody) {
+    	if ( responseBody.contains("<") && responseBody.contains(">")) return responseBody;
         try {
             JsonNode node = objectMapper.readTree(responseBody);
             if (node.isArray()) {
@@ -390,6 +463,31 @@ public class HttpTask extends WorkflowSystemTask {
 
         public void setReadTimeOut(Integer readTimeOut) {
             this.readTimeOut = readTimeOut;
+        }
+
+        @Override
+        public String toString() {
+            return "Input [method="
+                    + method
+                    + ", vipAddress="
+                    + vipAddress
+                    + ", appName="
+                    + appName
+                    + ", headers="
+                    + headers
+                    + ", uri="
+                    + uri
+                    + ", body="
+                    + body
+                    + ", accept="
+                    + accept
+                    + ", contentType="
+                    + contentType
+                    + ", connectionTimeOut="
+                    + connectionTimeOut
+                    + ", readTimeOut="
+                    + readTimeOut
+                    + "]";
         }
     }
 }
